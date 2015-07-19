@@ -106,7 +106,7 @@ public abstract class OneDReader implements Reader {
         boolean tryHarder = hints != null
                 && hints.containsKey(DecodeHintType.TRY_HARDER);
         boolean is45 = (hints.get(DecodeHintType.TRY_HARDER).toString() == "45");
-        try {
+        try {//remove this for war version
             if (tryHarder && is45 && image.isRotateSupported()) {
                 try {
                     // try 45 first if enable
