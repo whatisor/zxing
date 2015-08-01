@@ -105,8 +105,8 @@ public abstract class OneDReader implements Reader {
             throws NotFoundException, FormatException {
         boolean tryHarder = hints != null
                 && hints.containsKey(DecodeHintType.TRY_HARDER);
-        boolean is45 = (hints.get(DecodeHintType.TRY_HARDER).toString() == "45");
-        try {//remove this for war version
+        boolean is45 = true;//(hints.get(DecodeHintType.TRY_HARDER).toString() == "45");
+      //  try {//remove this for war version
             if (tryHarder && is45 && image.isRotateSupported()) {
                 try {
                     // try 45 first if enable
@@ -148,9 +148,9 @@ public abstract class OneDReader implements Reader {
                 return null;
             }
 
-        } catch (NotFoundException nfe) {
-            return null;
-        }
+//        } catch (NotFoundException nfe) {
+//            return null;
+//        }
     }
 
     @Override
