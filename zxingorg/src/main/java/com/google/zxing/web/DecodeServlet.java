@@ -33,7 +33,6 @@ import com.google.zxing.common.GlobalHistogramBinarizer;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.multi.GenericMultipleBarcodeReader;
 import com.google.zxing.multi.MultipleBarcodeReader;
-
 import com.google.common.collect.Lists;
 import com.google.common.io.Resources;
 import com.google.common.net.HttpHeaders;
@@ -73,363 +72,416 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.Part;
 
+import java.awt.Image;
+import java.awt.Graphics;
+import java.awt.Color;
+import java.awt.Transparency;
+import java.io.File;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 /**
- * {@link HttpServlet} which decodes images containing barcodes. Given a URL, it will
- * retrieve the image and decode it. It can also process image files uploaded via POST.
- *
+ * {@link HttpServlet} which decodes images containing barcodes. Given a URL, it
+ * will retrieve the image and decode it. It can also process image files
+ * uploaded via POST.
+ * 
  * @author Sean Owen
  */
-@MultipartConfig(
-    maxFileSize = 10_000_000,
-    maxRequestSize = 10_000_000,
-    fileSizeThreshold = 1_000_000,
-    location = "/tmp")
+@MultipartConfig(maxFileSize = 10_000_000, maxRequestSize = 10_000_000, fileSizeThreshold = 1_000_000, location = "/tmp")
 @WebServlet("/w/decode")
 public final class DecodeServlet extends HttpServlet {
 
-  private static final Logger log = Logger.getLogger(DecodeServlet.class.getName());
+    private static final Logger log = Logger.getLogger(DecodeServlet.class
+            .getName());
 
-  // No real reason to let people upload more than a 10MB image
-  private static final long MAX_IMAGE_SIZE = 10_000_000L;
-  // No real reason to deal with more than maybe 10 megapixels
-  private static final int MAX_PIXELS = 10_000_000;
-  private static final byte[] REMAINDER_BUFFER = new byte[32768];
-  private static final Map<DecodeHintType,Object> HINTS;
-  private static final Map<DecodeHintType,Object> HINTS_PURE;
+    // No real reason to let people upload more than a 10MB image
+    private static final long MAX_IMAGE_SIZE = 10_000_000L;
+    // No real reason to deal with more than maybe 10 megapixels
+    private static final int MAX_PIXELS = 10_000_000;
+    private static final byte[] REMAINDER_BUFFER = new byte[32768];
+    private static final Map<DecodeHintType, Object> HINTS;
+    private static final Map<DecodeHintType, Object> HINTS_PURE;
 
-  static {
-    HINTS = new EnumMap<>(DecodeHintType.class);
-    HINTS.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
-    HINTS.put(DecodeHintType.POSSIBLE_FORMATS, EnumSet.allOf(BarcodeFormat.class));
-    HINTS_PURE = new EnumMap<>(HINTS);
-    HINTS_PURE.put(DecodeHintType.PURE_BARCODE, Boolean.TRUE);
-  }
-
-  private Iterable<String> blockedURLSubstrings;
-
-  @Override
-  public void init(ServletConfig servletConfig) throws ServletException {
-    Logger logger = Logger.getLogger("com.google.zxing");
-    ServletContext context = servletConfig.getServletContext();
-    logger.addHandler(new ServletContextLogHandler(context));
-
-    URL blockURL = context.getClassLoader().getResource("/private/uri-block-substrings.txt");
-    if (blockURL == null) {
-      blockedURLSubstrings = Collections.emptyList();
-    } else {
-      try {
-        blockedURLSubstrings = Resources.readLines(blockURL, StandardCharsets.UTF_8);
-      } catch (IOException ioe) {
-        throw new ServletException(ioe);
-      }
-      log.info("Blocking URIs containing: " + blockedURLSubstrings);
-    }
-  }
-
-  @Override
-  protected void doGet(HttpServletRequest request,
-                       HttpServletResponse response) throws ServletException, IOException {
-
-    String imageURIString = request.getParameter("u");
-    if (imageURIString == null || imageURIString.isEmpty()) {
-      log.info("URI was empty");
-      errorResponse(request, response, "badurl");
-      return;
+    static {
+        HINTS = new EnumMap<>(DecodeHintType.class);
+        HINTS.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
+        HINTS.put(DecodeHintType.POSSIBLE_FORMATS,
+                EnumSet.allOf(BarcodeFormat.class));
+        HINTS_PURE = new EnumMap<>(HINTS);
+        HINTS_PURE.put(DecodeHintType.PURE_BARCODE, Boolean.TRUE);
     }
 
-    imageURIString = imageURIString.trim();
-    for (CharSequence substring : blockedURLSubstrings) {
-      if (imageURIString.contains(substring)) {
-        log.info("Disallowed URI " + imageURIString);
-        errorResponse(request, response, "badurl");
-        return;
-      }
+    private Iterable<String> blockedURLSubstrings;
+
+    @Override
+    public void init(ServletConfig servletConfig) throws ServletException {
+        Logger logger = Logger.getLogger("com.google.zxing");
+        ServletContext context = servletConfig.getServletContext();
+        logger.addHandler(new ServletContextLogHandler(context));
+
+        URL blockURL = context.getClassLoader().getResource(
+                "/private/uri-block-substrings.txt");
+        if (blockURL == null) {
+            blockedURLSubstrings = Collections.emptyList();
+        } else {
+            try {
+                blockedURLSubstrings = Resources.readLines(blockURL,
+                        StandardCharsets.UTF_8);
+            } catch (IOException ioe) {
+                throw new ServletException(ioe);
+            }
+            log.info("Blocking URIs containing: " + blockedURLSubstrings);
+        }
     }
 
-    URI imageURI;
-    try {
-      imageURI = new URI(imageURIString);
-      // Assume http: if not specified
-      if (imageURI.getScheme() == null) {
-        imageURI = new URI("http://" + imageURIString);
-      }
-    } catch (URISyntaxException urise) {
-      log.info("URI " + imageURIString + " was not valid: " + urise);
-      errorResponse(request, response, "badurl");
-      return;
+    @Override
+    protected void doGet(HttpServletRequest request,
+            HttpServletResponse response) throws ServletException, IOException {
+
+        String imageURIString = request.getParameter("u");
+        if (imageURIString == null || imageURIString.isEmpty()) {
+            log.info("URI was empty");
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        imageURIString = imageURIString.trim();
+        for (CharSequence substring : blockedURLSubstrings) {
+            if (imageURIString.contains(substring)) {
+                log.info("Disallowed URI " + imageURIString);
+                errorResponse(request, response, "badurl");
+                return;
+            }
+        }
+
+        URI imageURI;
+        try {
+            imageURI = new URI(imageURIString);
+            // Assume http: if not specified
+            if (imageURI.getScheme() == null) {
+                imageURI = new URI("http://" + imageURIString);
+            }
+        } catch (URISyntaxException urise) {
+            log.info("URI " + imageURIString + " was not valid: " + urise);
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        // Shortcut for data URI
+        if ("data".equals(imageURI.getScheme())) {
+            try {
+                BufferedImage image = ImageReader.readDataURIImage(imageURI);
+                processImage(image, request, response);
+            } catch (IOException ioe) {
+                log.info(ioe.toString());
+                errorResponse(request, response, "badurl");
+            }
+            return;
+        }
+
+        URL imageURL;
+        try {
+            imageURL = imageURI.toURL();
+        } catch (MalformedURLException ignored) {
+            log.info("URI was not valid: " + imageURIString);
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        String protocol = imageURL.getProtocol();
+        if (!"http".equalsIgnoreCase(protocol)
+                && !"https".equalsIgnoreCase(protocol)) {
+            log.info("URI was not valid: " + imageURIString);
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        HttpURLConnection connection;
+        try {
+            connection = (HttpURLConnection) imageURL.openConnection();
+        } catch (IllegalArgumentException ignored) {
+            log.info("URI could not be opened: " + imageURL);
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        connection.setAllowUserInteraction(false);
+        connection.setReadTimeout(5000);
+        connection.setConnectTimeout(5000);
+        connection.setRequestProperty(HttpHeaders.USER_AGENT, "zxing.org");
+        connection.setRequestProperty(HttpHeaders.CONNECTION, "close");
+
+        try {
+            connection.connect();
+        } catch (IOException ioe) {
+            // Encompasses lots of stuff, including
+            // java.net.SocketException, java.net.UnknownHostException,
+            // javax.net.ssl.SSLPeerUnverifiedException,
+            // org.apache.http.NoHttpResponseException,
+            // org.apache.http.client.ClientProtocolException,
+            log.info(ioe.toString());
+            errorResponse(request, response, "badurl");
+            return;
+        }
+
+        try (InputStream is = connection.getInputStream()) {
+            try {
+                if (connection.getResponseCode() != HttpServletResponse.SC_OK) {
+                    log.info("Unsuccessful return code: "
+                            + connection.getResponseCode());
+                    errorResponse(request, response, "badurl");
+                    return;
+                }
+                if (connection.getHeaderFieldInt(HttpHeaders.CONTENT_LENGTH, 0) > MAX_IMAGE_SIZE) {
+                    log.info("Too large");
+                    errorResponse(request, response, "badimage");
+                    return;
+                }
+
+                log.info("Decoding " + imageURL);
+                processStream(is, request, response);
+            } finally {
+                consumeRemainder(is);
+            }
+        } catch (IOException ioe) {
+            log.info(ioe.toString());
+            errorResponse(request, response, "badurl");
+        } finally {
+            connection.disconnect();
+        }
+
     }
-    
-    // Shortcut for data URI
-    if ("data".equals(imageURI.getScheme())) {
-      try {
-        BufferedImage image = ImageReader.readDataURIImage(imageURI);
+
+    private static void consumeRemainder(InputStream is) {
+        try {
+            int available;
+            while ((available = is.available()) > 0) {
+                is.read(REMAINDER_BUFFER, 0, available); // don't care about
+                                                         // value, or collision
+            }
+        } catch (IOException | IndexOutOfBoundsException ioe) {
+            // sun.net.www.http.ChunkedInputStream.read is throwing
+            // IndexOutOfBoundsException
+            // continue
+        }
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request,
+            HttpServletResponse response) throws ServletException, IOException {
+        Collection<Part> parts;
+        try {
+            parts = request.getParts();
+        } catch (IllegalStateException ise) {
+            log.info("File upload was too large or invalid");
+            errorResponse(request, response, "badimage");
+            return;
+        }
+        Part fileUploadPart = null;
+        for (Part part : parts) {
+            if (part.getHeader(HttpHeaders.CONTENT_DISPOSITION) != null) {
+                fileUploadPart = part;
+                break;
+            }
+        }
+        if (fileUploadPart == null) {
+            log.info("File upload was not multipart");
+            errorResponse(request, response, "badimage");
+        } else {
+            log.info("Decoding uploaded file");
+            try (InputStream is = fileUploadPart.getInputStream()) {
+                processStream(is, request, response);
+            }
+        }
+    }
+
+    private static void processStream(InputStream is,
+            HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+
+        BufferedImage image;
+        try {
+            image = ImageIO.read(is);
+        } catch (IOException | CMMException | IllegalArgumentException ioe) {
+            log.info(ioe.toString());
+            // Have seen these in some logs
+            errorResponse(request, response, "badimage");
+            return;
+        }
+        if (image == null) {
+            errorResponse(request, response, "badimage");
+            return;
+        }
+        if (image.getHeight() <= 1 || image.getWidth() <= 1
+                || image.getHeight() * image.getWidth() > MAX_PIXELS) {
+            log.info("Dimensions out of bounds: " + image.getWidth() + 'x'
+                    + image.getHeight());
+            errorResponse(request, response, "badimage");
+            return;
+        }
+
         processImage(image, request, response);
-      } catch (IOException ioe) {
-        log.info(ioe.toString());
-        errorResponse(request, response, "badurl");
-      }
-      return;
-    }
-    
-    URL imageURL;    
-    try {
-      imageURL = imageURI.toURL();
-    } catch (MalformedURLException ignored) {
-      log.info("URI was not valid: " + imageURIString);
-      errorResponse(request, response, "badurl");
-      return;
     }
 
-    String protocol = imageURL.getProtocol();
-    if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
-      log.info("URI was not valid: " + imageURIString);
-      errorResponse(request, response, "badurl");
-      return;
+    public static BufferedImage getScaledInstance(BufferedImage img,
+            int targetWidth, int targetHeight) {
+        int type = (img.getTransparency() == Transparency.OPAQUE) ? BufferedImage.TYPE_INT_RGB
+                : BufferedImage.TYPE_INT_ARGB;
+        BufferedImage ret = (BufferedImage) img;
+        int w, h;
+
+        w = targetWidth;
+        h = targetHeight;
+
+        BufferedImage tmp = new BufferedImage(w, h, type);
+        Graphics2D g2 = tmp.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BICUBIC);//best quality
+        g2.drawImage(ret, 0, 0, w, h, null);
+        g2.dispose();
+
+        ret = tmp;
+        return ret;
     }
-
-    HttpURLConnection connection;
-    try {
-      connection = (HttpURLConnection) imageURL.openConnection();
-    } catch (IllegalArgumentException ignored) {
-      log.info("URI could not be opened: " + imageURL);
-      errorResponse(request, response, "badurl");
-      return;
-    }
-
-    connection.setAllowUserInteraction(false);
-    connection.setReadTimeout(5000);
-    connection.setConnectTimeout(5000);
-    connection.setRequestProperty(HttpHeaders.USER_AGENT, "zxing.org");
-    connection.setRequestProperty(HttpHeaders.CONNECTION, "close");
-
-    try {
-      connection.connect();
-    } catch (IOException ioe) {
-      // Encompasses lots of stuff, including
-      //  java.net.SocketException, java.net.UnknownHostException,
-      //  javax.net.ssl.SSLPeerUnverifiedException,
-      //  org.apache.http.NoHttpResponseException,
-      //  org.apache.http.client.ClientProtocolException,
-      log.info(ioe.toString());
-      errorResponse(request, response, "badurl");
-      return;
-    }
-
-    try (InputStream is = connection.getInputStream()) {
-      try {
-        if (connection.getResponseCode() != HttpServletResponse.SC_OK) {
-          log.info("Unsuccessful return code: " + connection.getResponseCode());
-          errorResponse(request, response, "badurl");
-          return;
-        }
-        if (connection.getHeaderFieldInt(HttpHeaders.CONTENT_LENGTH, 0) > MAX_IMAGE_SIZE) {
-          log.info("Too large");
-          errorResponse(request, response, "badimage");
-          return;
-        }
-
-        log.info("Decoding " + imageURL);
-        processStream(is, request, response);
-      } finally {
-        consumeRemainder(is);
-      }
-    } catch (IOException ioe) {
-      log.info(ioe.toString());
-      errorResponse(request, response, "badurl");
-    } finally {
-      connection.disconnect();
-    }
-
-  }
-
-  private static void consumeRemainder(InputStream is) {
-    try {
-      int available;
-      while ((available = is.available()) > 0) {
-        is.read(REMAINDER_BUFFER, 0, available); // don't care about value, or collision
-      }
-    } catch (IOException | IndexOutOfBoundsException ioe) {
-      // sun.net.www.http.ChunkedInputStream.read is throwing IndexOutOfBoundsException
-      // continue
-    }
-  }
-
-  @Override
-  protected void doPost(HttpServletRequest request, HttpServletResponse response)
-      throws ServletException, IOException {
-    Collection<Part> parts;
-    try {
-      parts = request.getParts();
-    } catch (IllegalStateException ise) {
-      log.info("File upload was too large or invalid");
-      errorResponse(request, response, "badimage");
-      return;
-    }
-    Part fileUploadPart = null;
-    for (Part part : parts) {
-      if (part.getHeader(HttpHeaders.CONTENT_DISPOSITION) != null) {
-        fileUploadPart = part;
-        break;
-      }
-    }
-    if (fileUploadPart == null) {
-      log.info("File upload was not multipart");
-      errorResponse(request, response, "badimage");
-    } else {
-      log.info("Decoding uploaded file");
-      try (InputStream is = fileUploadPart.getInputStream()) {
-        processStream(is, request, response);
-      }
-    }
-  }
-
-  private static void processStream(InputStream is,
-                                    HttpServletRequest request,
-                                    HttpServletResponse response) throws ServletException, IOException {
-
-    BufferedImage image;
-    try {
-      image = ImageIO.read(is);
-    } catch (IOException | CMMException | IllegalArgumentException ioe) {
-      log.info(ioe.toString());
-      // Have seen these in some logs
-      errorResponse(request, response, "badimage");
-      return;
-    }
-    if (image == null) {
-      errorResponse(request, response, "badimage");
-      return;
-    }
-    if (image.getHeight() <= 1 || image.getWidth() <= 1 ||
-        image.getHeight() * image.getWidth() > MAX_PIXELS) {
-      log.info("Dimensions out of bounds: " + image.getWidth() + 'x' + image.getHeight());
-      errorResponse(request, response, "badimage");
-      return;
-    }
-    
-    processImage(image, request, response);
-  }
-  
-  private static void processImage(BufferedImage image,
-                                   HttpServletRequest request,
-                                   HttpServletResponse response) throws IOException, ServletException {
-
-    LuminanceSource source = new BufferedImageLuminanceSource(image);
-    BinaryBitmap bitmap = new BinaryBitmap(new GlobalHistogramBinarizer(source));
-    Collection<Result> results = Lists.newArrayListWithCapacity(1);
-
-    try {
-
-      Reader reader = new MultiFormatReader();
-      ReaderException savedException = null;
-      try {
-        // Look for multiple barcodes
-        MultipleBarcodeReader multiReader = new GenericMultipleBarcodeReader(reader);
-        Result[] theResults = multiReader.decodeMultiple(bitmap, HINTS);
-        if (theResults != null) {
-          results.addAll(Arrays.asList(theResults));
-        }
-      } catch (ReaderException re) {
-        savedException = re;
-      }
-  
-      if (results.isEmpty()) {
+    private static  ReaderException finding(BufferedImage image,Collection<Result> results ){
+        LuminanceSource source = new BufferedImageLuminanceSource(image);
+        BinaryBitmap bitmap = new BinaryBitmap(new GlobalHistogramBinarizer(
+                source));
+       
+        Reader reader = new MultiFormatReader();
+        ReaderException savedException = null;
         try {
-          // Look for pure barcode
-          Result theResult = reader.decode(bitmap, HINTS_PURE);
-          if (theResult != null) {
-            results.add(theResult);
-          }
+            // Look for multiple barcodes
+            MultipleBarcodeReader multiReader = new GenericMultipleBarcodeReader(
+                    reader);
+            Result[] theResults = multiReader.decodeMultiple(bitmap, HINTS);
+            if (theResults != null) {
+                results.addAll(Arrays.asList(theResults));
+            }
         } catch (ReaderException re) {
-          savedException = re;
+            savedException = re;
         }
-      }
-  
-      if (results.isEmpty()) {
+
+        if (results.isEmpty()) {
+            try {
+                // Look for pure barcode
+                Result theResult = reader.decode(bitmap, HINTS_PURE);
+                if (theResult != null) {
+                    results.add(theResult);
+                }
+            } catch (ReaderException re) {
+                savedException = re;
+            }
+        }
+
+        if (results.isEmpty()) {
+            try {
+                // Look for normal barcode in photo
+                Result theResult = reader.decode(bitmap, HINTS);
+                if (theResult != null) {
+                    results.add(theResult);
+                }
+            } catch (ReaderException re) {
+                savedException = re;
+            }
+        }
+
+        if (results.isEmpty()) {
+            try {
+                // Try again with other binarizer
+                BinaryBitmap hybridBitmap = new BinaryBitmap(
+                        new HybridBinarizer(source));
+                Result theResult = reader.decode(hybridBitmap, HINTS);
+                if (theResult != null) {
+                    results.add(theResult);
+                }
+            } catch (ReaderException re) {
+                savedException = re;
+            }
+        }
+        return savedException;
+    }
+    private static void processImage(BufferedImage image,
+            HttpServletRequest request, HttpServletResponse response)
+            throws IOException, ServletException {
+
+       
+        Collection<Result> results = Lists.newArrayListWithCapacity(1);
+        ReaderException savedException = null;
         try {
-          // Look for normal barcode in photo
-          Result theResult = reader.decode(bitmap, HINTS);
-          if (theResult != null) {
-            results.add(theResult);
-          }
-        } catch (ReaderException re) {
-          savedException = re;
+            //first time with origin
+            savedException = finding(image,results);
+            //second time with scaled up if only pixel <= 1024x1024
+            int MAX_TRY = 3;
+            int trial = 0;
+            while (trial++ < MAX_TRY && results.isEmpty() && image.getWidth()*image.getHeight()<=1024*1024) {
+                image = getScaledInstance(image, (int)(image.getWidth() * 2),
+                        (int)(image.getHeight() * 2));
+                savedException = finding(image,results);
+            }
+
+            if (results.isEmpty()) {
+                handleException(savedException, request, response);
+                return;
+            }
+
+        } catch (RuntimeException re) {
+            // Call out unexpected errors in the log clearly
+            log.log(Level.WARNING, "Unexpected exception from library", re);
+            throw new ServletException(re);
         }
-      }
-  
-      if (results.isEmpty()) {
-        try {
-          // Try again with other binarizer
-          BinaryBitmap hybridBitmap = new BinaryBitmap(new HybridBinarizer(source));
-          Result theResult = reader.decode(hybridBitmap, HINTS);
-          if (theResult != null) {
-            results.add(theResult);
-          }
-        } catch (ReaderException re) {
-          savedException = re;
+
+        String fullParameter = request.getParameter("full");
+        boolean minimalOutput = fullParameter != null
+                && !Boolean.parseBoolean(fullParameter);
+        if (minimalOutput) {
+            response.setContentType(MediaType.PLAIN_TEXT_UTF_8.toString());
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+            try (Writer out = new OutputStreamWriter(
+                    response.getOutputStream(), StandardCharsets.UTF_8)) {
+                for (Result result : results) {
+                    out.write(result.getText());
+                    out.write('\n');
+                }
+            }
+        } else {
+            request.setAttribute("results", results);
+            request.getRequestDispatcher("decoderesult.jspx").forward(request,
+                    response);
         }
-      }
-  
-      if (results.isEmpty()) {
-        handleException(savedException, request, response);
-        return;
-      }
-
-    } catch (RuntimeException re) {
-      // Call out unexpected errors in the log clearly
-      log.log(Level.WARNING, "Unexpected exception from library", re);
-      throw new ServletException(re);
     }
 
-    String fullParameter = request.getParameter("full");
-    boolean minimalOutput = fullParameter != null && !Boolean.parseBoolean(fullParameter);
-    if (minimalOutput) {
-      response.setContentType(MediaType.PLAIN_TEXT_UTF_8.toString());
-      response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-      try (Writer out = new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8)) {
-        for (Result result : results) {
-          out.write(result.getText());
-          out.write('\n');
+    private static void handleException(ReaderException re,
+            HttpServletRequest request, HttpServletResponse response)
+            throws IOException, ServletException {
+        if (re instanceof NotFoundException) {
+            log.info("Not found: " + re);
+            errorResponse(request, response, "notfound");
+        } else if (re instanceof FormatException) {
+            log.info("Format problem: " + re);
+            errorResponse(request, response, "format");
+        } else if (re instanceof ChecksumException) {
+            log.info("Checksum problem: " + re);
+            errorResponse(request, response, "format");
+        } else {
+            log.info("Unknown problem: " + re);
+            errorResponse(request, response, "notfound");
         }
-      }
-    } else {
-      request.setAttribute("results", results);
-      request.getRequestDispatcher("decoderesult.jspx").forward(request, response);
     }
-  }
 
-  private static void handleException(ReaderException re,
-                                      HttpServletRequest request,
-                                      HttpServletResponse response)
-      throws IOException, ServletException {
-    if (re instanceof NotFoundException) {
-      log.info("Not found: " + re);
-      errorResponse(request, response, "notfound");
-    } else if (re instanceof FormatException) {
-      log.info("Format problem: " + re);
-      errorResponse(request, response, "format");
-    } else if (re instanceof ChecksumException) {
-      log.info("Checksum problem: " + re);
-      errorResponse(request, response, "format");
-    } else {
-      log.info("Unknown problem: " + re);
-      errorResponse(request, response, "notfound");
+    private static void errorResponse(HttpServletRequest request,
+            HttpServletResponse response, String key) throws ServletException,
+            IOException {
+        Locale locale = request.getLocale();
+        if (locale == null) {
+            locale = Locale.ENGLISH;
+        }
+        ResourceBundle bundle = ResourceBundle.getBundle("Strings", locale);
+        String title = bundle.getString("response.error." + key + ".title");
+        String text = bundle.getString("response.error." + key + ".text");
+        request.setAttribute("title", title);
+        request.setAttribute("text", text);
+        request.getRequestDispatcher("response.jspx")
+                .forward(request, response);
     }
-  }
-
-  private static void errorResponse(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    String key) throws ServletException, IOException {
-    Locale locale = request.getLocale();
-    if (locale == null) {
-      locale = Locale.ENGLISH;
-    }
-    ResourceBundle bundle = ResourceBundle.getBundle("Strings", locale);
-    String title = bundle.getString("response.error." + key + ".title");
-    String text = bundle.getString("response.error." + key + ".text");
-    request.setAttribute("title", title);
-    request.setAttribute("text", text);
-    request.getRequestDispatcher("response.jspx").forward(request, response);
-  }
 
 }

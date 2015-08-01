@@ -83,10 +83,6 @@
 
   <modules>
     <module>core</module>
-    <module>javase</module>
-    <module>android-core</module>
-    <module>android-integration</module>
-    <module>zxing.appspot.com</module>
     <module>zxingorg</module>
   </modules>
 
