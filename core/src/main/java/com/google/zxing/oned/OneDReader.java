@@ -46,40 +46,112 @@ public abstract class OneDReader implements Reader {
     return decode(image, null);
   }
 
-  // Note that we don't try rotation without the try harder flag, even if rotation was supported.
+//Note that we don't try rotation without the try harder flag, even if
+  // rotation was supported.
   @Override
-  public Result decode(BinaryBitmap image,
-                       Map<DecodeHintType,?> hints) throws NotFoundException, FormatException {
-    try {
-      return doDecode(image, hints);
-    } catch (NotFoundException nfe) {
-      boolean tryHarder = hints != null && hints.containsKey(DecodeHintType.TRY_HARDER);
-      if (tryHarder && image.isRotateSupported()) {
-        BinaryBitmap rotatedImage = image.rotateCounterClockwise();
-        Result result = doDecode(rotatedImage, hints);
-        // Record that we found it rotated 90 degrees CCW / 270 degrees CW
-        Map<ResultMetadataType,?> metadata = result.getResultMetadata();
-        int orientation = 270;
-        if (metadata != null && metadata.containsKey(ResultMetadataType.ORIENTATION)) {
-          // But if we found it reversed in doDecode(), add in that result here:
-          orientation = (orientation +
-              (Integer) metadata.get(ResultMetadataType.ORIENTATION)) % 360;
-        }
-        result.putMetadata(ResultMetadataType.ORIENTATION, orientation);
-        // Update result points
-        ResultPoint[] points = result.getResultPoints();
-        if (points != null) {
-          int height = rotatedImage.getHeight();
-          for (int i = 0; i < points.length; i++) {
-            points[i] = new ResultPoint(height - points[i].getY() - 1, points[i].getX());
+  public Result decode(BinaryBitmap image, Map<DecodeHintType, ?> hints)
+          throws NotFoundException, FormatException {
+      try {
+          return doDecode(image, hints);// normal try
+      } catch (NotFoundException nfe) {
+          try {
+              return decode90(image, hints);// 90try
+          } catch (NotFoundException nfe2) {
+              return decode45(image, hints);// 45try
           }
-        }
-        return result;
-      } else {
-        throw nfe;
       }
-    }
   }
+
+  public Result decode90(BinaryBitmap image, Map<DecodeHintType, ?> hints)
+          throws NotFoundException, FormatException {
+      boolean tryHarder = hints != null
+              && hints.containsKey(DecodeHintType.TRY_HARDER);
+          if (tryHarder && image.isRotateSupported()) {
+              BinaryBitmap rotatedImage = image.rotateCounterClockwise();
+
+              Result result = doDecode(rotatedImage, hints);
+              // Record that we found it rotated 90 degrees CCW / 270
+              // degrees CW
+              Map<ResultMetadataType, ?> metadata = result
+                      .getResultMetadata();
+              int orientation = 270;
+              if (metadata != null
+                      && metadata.containsKey(ResultMetadataType.ORIENTATION)) {
+                  // But if we found it reversed in doDecode(), add in
+                  // that result here:
+                  orientation = (orientation + (Integer) metadata
+                          .get(ResultMetadataType.ORIENTATION)) % 360;
+              }
+              result.putMetadata(ResultMetadataType.ORIENTATION, orientation);
+              // Update result points
+              ResultPoint[] points = result.getResultPoints();
+              if (points != null) {
+                  int height = rotatedImage.getHeight();
+                  for (int i = 0; i < points.length; i++) {
+                      points[i] = new ResultPoint(height - points[i].getY()
+                              - 1, points[i].getX());
+                  }
+              }
+              return result;
+
+          } else {
+              return null;
+          }
+     
+  }
+
+  public Result decode45(BinaryBitmap image, Map<DecodeHintType, ?> hints)
+          throws NotFoundException, FormatException {
+      boolean tryHarder = hints != null
+              && hints.containsKey(DecodeHintType.TRY_HARDER);
+      boolean is45 = true;//(hints.get(DecodeHintType.TRY_HARDER).toString() == "45");
+    //  try {//remove this for war version
+          if (tryHarder && is45 && image.isRotateSupported()) {
+              try {
+                  // try 45 first if enable
+                  System.out.println("Decoding");
+                  BinaryBitmap rotatedImage = image
+                          .rotateCounterClockwise45();
+                  Result result = doDecode(rotatedImage, hints);
+                  // Record that we found it rotated 90 degrees CCW / 270
+                  // degrees CW
+                  Map<ResultMetadataType, ?> metadata = result
+                          .getResultMetadata();
+                  int orientation = 315;
+                  if (metadata != null
+                          && metadata
+                                  .containsKey(ResultMetadataType.ORIENTATION)) {
+                      // But if we found it reversed in doDecode(), add in
+                      // that result here:
+                      orientation = (orientation + (Integer) metadata
+                              .get(ResultMetadataType.ORIENTATION)) % 360;
+                  }
+                  result.putMetadata(ResultMetadataType.ORIENTATION,
+                          orientation);
+                  // Update result points
+                  ResultPoint[] points = result.getResultPoints();
+                  if (points != null) {
+                      int height = rotatedImage.getHeight();
+                      for (int i = 0; i < points.length; i++) {
+                          points[i] = new ResultPoint(height
+                                  - points[i].getY() - 1, points[i].getX());
+                      }
+                  }
+                  return result;
+              } catch (NotFoundException nfe) {
+                  BinaryBitmap rotatedImage = image
+                          .rotateCounterClockwise45();
+                  return decode90(rotatedImage, hints);
+              }
+          }  else {
+              return null;
+          }
+
+//      } catch (NotFoundException nfe) {
+//          return null;
+//      }
+  }
+
 
   @Override
   public void reset() {
