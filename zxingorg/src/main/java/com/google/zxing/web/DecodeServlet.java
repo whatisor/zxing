@@ -79,6 +79,11 @@ import java.awt.Transparency;
 import java.io.File;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.image.BufferedImageOp;
+import java.awt.image.ConvolveOp;
+import java.awt.image.ImageObserver;
+import java.awt.image.Kernel;
+
 /**
  * {@link HttpServlet} which decodes images containing barcodes. Given a URL, it
  * will retrieve the image and decode it. It can also process image files
@@ -338,7 +343,12 @@ public final class DecodeServlet extends HttpServlet {
                 RenderingHints.VALUE_INTERPOLATION_BICUBIC);//best quality
         g2.drawImage(ret, 0, 0, w, h, null);
         g2.dispose();
-
+        //sharpen
+     // A 2x2 kernel that sharpens an image        
+        Kernel kernel = new Kernel(2, 2, new float[] { 0, -0.2f, 1.4f, -0.2f,
+                -0 });
+         BufferedImageOp op = new ConvolveOp(kernel);
+         tmp = op.filter(tmp, null);
         ret = tmp;
         return ret;
     }
