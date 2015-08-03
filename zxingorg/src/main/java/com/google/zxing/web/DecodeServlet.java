@@ -342,15 +342,17 @@ public final class DecodeServlet extends HttpServlet {
         g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                 RenderingHints.VALUE_INTERPOLATION_BICUBIC);//best quality
         g2.drawImage(ret, 0, 0, w, h, null);
-        g2.dispose();
-        //sharpen
-     // A 2x2 kernel that sharpens an image        
-        Kernel kernel = new Kernel(2, 2, new float[] { 0, -0.2f, 1.4f, -0.2f,
-                -0 });
-         BufferedImageOp op = new ConvolveOp(kernel);
-         tmp = op.filter(tmp, null);
+        g2.dispose();      
         ret = tmp;
         return ret;
+    }
+    public static BufferedImage sharpen(BufferedImage source, float level){
+        //sharpen
+        // A 2x2 kernel that sharpens an image
+           Kernel kernel = new Kernel(2, 2, new float[] { 0, -level/2, 1.0f+level, -level/2,
+                   -0 });
+            BufferedImageOp op = new ConvolveOp(kernel);
+            return op.filter(source, null);
     }
     private static  ReaderException finding(BufferedImage image,Collection<Result> results ){
         LuminanceSource source = new BufferedImageLuminanceSource(image);
@@ -410,7 +412,7 @@ public final class DecodeServlet extends HttpServlet {
         }
         return savedException;
     }
-    private static void processImage(BufferedImage image,
+    private static void processImage(BufferedImage source,
             HttpServletRequest request, HttpServletResponse response)
             throws IOException, ServletException {
 
@@ -419,14 +421,25 @@ public final class DecodeServlet extends HttpServlet {
         ReaderException savedException = null;
         try {
             //first time with origin
-            savedException = finding(image,results);
+            savedException = finding(source,results);
             //second time with scaled up if only pixel <= 1024x1024
             int MAX_TRY = 3;
             int trial = 0;
-            while (trial++ < MAX_TRY && results.isEmpty() && image.getWidth()*image.getHeight()<=1024*1024) {
-                image = getScaledInstance(image, (int)(image.getWidth() * 2),
-                        (int)(image.getHeight() * 2));
-                savedException = finding(image,results);
+            while (trial++ < MAX_TRY && results.isEmpty() && source.getWidth()*source.getHeight()<=1024*1024) {
+                BufferedImage image = getScaledInstance(source, (int)(source.getWidth() * 2*trial),
+                        (int)(source.getHeight() * 2*trial));
+                BufferedImage image50 = sharpen(image,0.5f);
+                savedException = finding(image50,results);
+                //25
+                if(results.isEmpty()){
+                    BufferedImage image25 = sharpen(image,0.25f);
+                    savedException = finding(image25,results);
+                }
+              //75
+                if(results.isEmpty()){
+                    BufferedImage image75 = sharpen(image,0.75f);
+                    savedException = finding(image75,results);
+                }
             }
 
             if (results.isEmpty()) {
